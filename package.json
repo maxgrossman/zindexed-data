@@ -15,7 +15,7 @@
     "@turf/helpers": "^6.3.0",
     "@turf/intersect": "^6.3.0",
     "json-stream": "^1.0.0",
-    "mongo": "^0.1.0",
+    "mongodb": "^3.6.6",
     "redis": "^3.1.2",
     "stream-json": "^1.7.1"
   }
