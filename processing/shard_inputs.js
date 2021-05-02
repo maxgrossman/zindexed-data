@@ -22,8 +22,8 @@ const documentZIndexes = {};
  */
 function processChunk(chunk) {
     if (Math.random() < 0.1) {
-        chunk.properties.amentiy='restaurant'
-        chunk.properties.cuisine='pizza'
+        chunk.properties.amenity = 'restaurant'
+        chunk.properties.cuisine = 'pizza'
     }
     // loop through each coordinate in the polygon
     // find and place it in the zIndex it fits into the most

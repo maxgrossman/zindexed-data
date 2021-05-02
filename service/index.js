@@ -3,7 +3,7 @@ const {tileToZIndex} = require('../lib/geos');
 
 const {MongoClient} = require('mongodb');
 const express = require('express');
-const app = express();
+const app = express(); app.use(express.json());
 const redis = require('redis');
 const redisClient = redis.createClient();
 const messages = {
@@ -11,14 +11,14 @@ const messages = {
     500: () => 'server error'
 }
 const poiLookup = {
-    'metadata.amenity': { $eq: 'restaurant' },
-    'metadata.cuisine': { $eq: 'pizza'}
+    pizza: {
+        'metadata.amenity': { $eq: 'restaurant' },
+        'metadata.cuisine': { $eq: 'pizza' }, 
+    }
 }
 
-
 function redisMiddleware(req,res,next) {
-    const key = `${req.path}?${Object.keys(req.query).sort().map(k => `${k}=${req.query[k]}`)}`
-    redisClient.get(key, (error, cached) => {
+redisClient.get(JSON.stringify(req.body), (error, cached) => {
         if (error) {
             res.status(500).json({
                 message: messages[500]()
@@ -34,58 +34,65 @@ function redisMiddleware(req,res,next) {
 }
 
 
-app.get('/bbox', redisMiddleware, async (req, res) => {
-    if (!req.query.hasOwnProperty('bounds')) {
+app.post('/', redisMiddleware, async (req, res) => {
+    if (!req.body.hasOwnProperty('geoFilter')) {
         res.status(400).json({
-            message: messages[400]('missing bounds query parameter')
+            message: message[400]('missing filter entry in request body')
         })
-        return;
-    }
-
-    const findObject = {}, [w,s,e,n] = req.query.bounds.split(',').map(Number);
-    
-    if (req.query.approximate) {
-        const northWestTile = pointToTile(w,n,15), southEastTile = pointToTile(e,s,15);
-        findObject.zIndex = {
-            $gte: tileToZIndex(northWestTile[0],northWestTile[1]),
-            $lte: tileToZIndex(southEastTile[0],southEastTile[1])
-        }
     } else {
-        findObject.feature = {
-            $geoIntersects: {
-                $geometry: {
-                    type: 'Polygon',
-                    coordinates: [[
-                        [w,n],  
-                        [w,s],
-                        [e,s],
-                        [e,n],
-                        [w,n]
-                    ]]
+        try {
+            const findObject = {}
+            switch (req.body.geoFilter) {
+                case 'zIndex': {
+                    const nwTile = pointToTile(req.body.bounds[0],req.body.bounds[3],15),
+                          seTile = pointToTile(req.body.bounds[2],req.body.bounds[1],15);
+                    
+                    findObject.zIndex = {
+                        $gte: tileToZIndex(nwTile[0],nwTile[1]),
+                        $lte: tileToZIndex(seTile[0],seTile[1])
+                    }
+                    break;
+                }
+                case 'geojson': {
+                    findObject.feature = {
+                        $geoIntersects: {
+                            $geometry: req.body.geometry
+                        }
+                    }
+                    break
+                }
+                default: {
+                    res.status(400).json({
+                        message: message[400]('unkown geoFilter type')
+                    })
+                    return;
                 }
             }
+
+            if (req.body.hasOwnProperty('poiType') && poiLookup[req.body.poiType])
+                Object.keys(poiLookup[req.body.poiType]).forEach(k => findObject[k] = poiLookup[req.body.poiType][k]);
+
+
+            const features = await featuresCollection.find(findObject).toArray();
+            const featureCollection = {
+                type: 'FeatureCollection',
+                features: features.map(f => {
+                    return {
+                        type: 'Feature',
+                        geometry: f.feature,
+                        propertyes: f.metadata
+                    }
+                })
+            }
+
+            if (featureCollection.features.length)
+                redisClient.set(JSON.stringify(req.body), JSON.stringify(featureCollection));
+            
+            res.send(featureCollection);
+        } catch (e) {
+            res.status(500).json({message: messages[500]() })
         }
     }
-
-    if (req.query.hasOwnProperty('poi') && poiLookup[req.query.poi]) {
-        Object.keys(poiLookup[req.query.poi]).forEach(k => findObject[k] = poiLookup[req.query.poi][k]);
-    }
-
-    const features = await featuresCollection.find(findObject).toArray();
-    const featureCollection = {
-        type: 'FeatureCollection',
-        features: features.map(f => {
-            return {
-                type: 'Feature',
-                geometry: f.feature,
-                propertyes: f.metadata
-            }
-        })
-    }
-
-    const key = `${req.path}?${Object.keys(req.query).sort().map(k => `${k}=${req.query[k]}`)}`
-    redisClient.set(key, JSON.stringify(featureCollection));
-    res.send(featureCollection);
 })
 
 
